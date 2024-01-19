@@ -112,12 +112,13 @@ fn main() -> Result<()> {
         focus_follow_mouse: true,
         border_width: 1,
         startup_hook: startup.into(),
+        floating_classes: vec!["Qalculate!".to_string()],
         ..Config::default()
     });
 
     let mut wm = WindowManager::new(config, key_bindings, HashMap::new(), conn)?;
 
-    let bar = bar::create_bar(&mut wm.state).unwrap();
+    let bar = bar::create_bar().unwrap();
     wm = bar.add_to(wm);
 
     wm.add_extension(Media { player: None });

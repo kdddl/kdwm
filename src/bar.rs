@@ -7,13 +7,17 @@ use penrose_ui::{
     bar::widgets::{IntervalText, RefreshText},
     *,
 };
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
 use std::time;
 
-pub fn create_bar<X: XConn>(state: &mut penrose::core::State<X>) -> Result<bar::StatusBar<X>> {
+pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
     let style: core::TextStyle = core::TextStyle {
         fg: theme::LIGHT[0].into(),
         bg: Some(theme::DARK[0].into()),
-        padding: (10, 10),
+        padding: (0, 10),
     };
 
     let mut widgets: Vec<Box<dyn bar::widgets::Widget<X>>> = Vec::new();
@@ -43,7 +47,7 @@ pub fn create_bar<X: XConn>(state: &mut penrose::core::State<X>) -> Result<bar::
     widgets.push(Box::new(IntervalText::new(
         style,
         get_weather,
-        time::Duration::from_secs(60 * 15),
+        time::Duration::from_secs(60 * 60),
     )));
 
     widgets.push(Box::new(MediaWidget::new(style)));
@@ -81,34 +85,96 @@ fn get_weather() -> String {
 }
 
 struct MediaWidget {
-    inner: Text,
+    inner: Arc<Mutex<Text>>,
+    tx: mpsc::Sender<String>,
+}
+
+struct MediaText {
+    player: Text,
+    title: Text,
+    artist: Text,
 }
 
 impl MediaWidget {
     fn new(style: TextStyle) -> Self {
-        Self {
-            inner: Text::new("", style, false, true),
-        }
+        let inner = Arc::new(Mutex::new(Text::new("", style, false, true)));
+        let text = Arc::clone(&inner);
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let mut player = "".to_string();
+            loop {
+                tracing::info!("Updating media widget");
+                if let Ok(value) = rx.recv() {
+                    player = value;
+                }
+                {
+                    let mut t = match text.lock() {
+                        Ok(inner) => inner,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    let media = spawn_for_output_with_args(
+                        "playerctl",
+                        &[
+                            "-p",
+                            &player,
+                            "metadata",
+                            "-f",
+                            "{{ artist }}: {{ title }} [{{ playerName }}]",
+                        ],
+                    )
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                    t.set_text(&format!("{media}"));
+                }
+                thread::sleep(std::time::Duration::from_secs(1));
+            }
+        });
+
+        Self { inner, tx }
     }
 }
 
 impl<X: XConn> Widget<X> for MediaWidget {
     fn draw(&mut self, ctx: &mut Context<'_>, s: usize, f: bool, w: u32, h: u32) -> Result<()> {
-        Widget::<X>::draw(&mut self.inner, ctx, s, f, w, h)
+        let mut inner = match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        Widget::<X>::draw(&mut *inner, ctx, s, f, w, h);
+        // ctx.draw_text("Hi", 0, (10, 10), theme::BLUE.into());
+
+        Ok(())
     }
 
     fn current_extent(&mut self, ctx: &mut Context<'_>, h: u32) -> Result<(u32, u32)> {
-        Widget::<X>::current_extent(&mut self.inner, ctx, h)
+        let mut inner = match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        Widget::<X>::current_extent(&mut *inner, ctx, h)
     }
 
     fn is_greedy(&self) -> bool {
-        Widget::<X>::is_greedy(&self.inner)
+        let inner = match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        Widget::<X>::is_greedy(&*inner)
     }
 
     fn require_draw(&self) -> bool {
-        Widget::<X>::require_draw(&self.inner)
-    }
+        let inner = match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
+        Widget::<X>::require_draw(&*inner)
+    }
     fn on_refresh(&mut self, state: &mut penrose::core::State<X>, x: &X) -> Result<()> {
         let player = state.extension::<crate::Media>().unwrap();
         let player = player.borrow();
@@ -116,20 +182,8 @@ impl<X: XConn> Widget<X> for MediaWidget {
             None => "",
             Some(value) => value,
         };
-        let media = spawn_for_output_with_args(
-            "playerctl",
-            &[
-                "-p",
-                player,
-                "metadata",
-                "-f",
-                "{{ artist }}: {{ title }} [{{ playerName }}]",
-            ],
-        )
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-        self.inner.set_text(media);
+
+        self.tx.send(player.to_string()).unwrap();
 
         Ok(())
     }
