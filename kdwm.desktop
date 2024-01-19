@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=1.0
+Name=kdwm
+Comment=Use this session to run penrose-from-scratch as your desktop environment
+Exec=run-kdwm
+Icon=
+Type=Application
+DesktopNames=kdwm
