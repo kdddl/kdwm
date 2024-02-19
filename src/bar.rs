@@ -17,7 +17,13 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
     let style: core::TextStyle = core::TextStyle {
         fg: theme::LIGHT[0].into(),
         bg: Some(theme::DARK[0].into()),
-        padding: (0, 10),
+        padding: (10, 0),
+    };
+
+    let style2: core::TextStyle = core::TextStyle {
+        fg: theme::GREEN.into(),
+        bg: Some(theme::DARK[0].into()),
+        padding: (10, 0),
     };
 
     let mut widgets: Vec<Box<dyn bar::widgets::Widget<X>>> = Vec::new();
@@ -34,9 +40,11 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
 
     widgets.push(Box::new(IntervalText::new(
         style,
-        get_datetime,
-        time::Duration::from_secs(1),
+        get_weather,
+        time::Duration::from_secs(60 * 60),
     )));
+
+    widgets.push(Box::new(MediaWidget::new(style)));
 
     widgets.push(Box::new(IntervalText::new(
         style,
@@ -46,11 +54,9 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
 
     widgets.push(Box::new(IntervalText::new(
         style,
-        get_weather,
-        time::Duration::from_secs(60 * 60),
+        get_datetime,
+        time::Duration::from_secs(1),
     )));
-
-    widgets.push(Box::new(MediaWidget::new(style)));
 
     bar::StatusBar::try_new(
         bar::Position::Top,
@@ -73,7 +79,7 @@ fn get_updates() -> String {
         .unwrap_or_default()
         .trim()
         .to_string();
-    format!("UP: {updates}")
+    format!("PKGS: {updates}")
 }
 
 fn get_weather() -> String {
@@ -143,10 +149,7 @@ impl<X: XConn> Widget<X> for MediaWidget {
             Err(poisoned) => poisoned.into_inner(),
         };
 
-        Widget::<X>::draw(&mut *inner, ctx, s, f, w, h);
-        // ctx.draw_text("Hi", 0, (10, 10), theme::BLUE.into());
-
-        Ok(())
+        Widget::<X>::draw(&mut *inner, ctx, s, f, w, h)
     }
 
     fn current_extent(&mut self, ctx: &mut Context<'_>, h: u32) -> Result<(u32, u32)> {
@@ -186,5 +189,64 @@ impl<X: XConn> Widget<X> for MediaWidget {
         self.tx.send(player.to_string()).unwrap();
 
         Ok(())
+    }
+}
+
+struct MultiText {
+    text: Vec<Text>,
+    styles: Vec<TextStyle>,
+    right_justified: bool,
+}
+
+impl MultiText {
+    pub fn new(text: Vec<&str>, styles: Vec<TextStyle>, right_justified: bool) -> Self {
+        let text = text
+            .iter()
+            .enumerate()
+            .map(|(index, text)| Text::new(text.to_string(), styles[index], false, right_justified))
+            .collect();
+        Self {
+            text,
+            styles,
+            right_justified,
+        }
+    }
+}
+
+impl<X: XConn> Widget<X> for MultiText {
+    fn draw(&mut self, ctx: &mut Context<'_>, s: usize, f: bool, w: u32, h: u32) -> Result<()> {
+        for text in self.text.iter_mut() {
+            Widget::<X>::draw(text, ctx, s, f, w, h)?;
+        }
+
+        Ok(())
+    }
+
+    fn current_extent(&mut self, ctx: &mut Context<'_>, h: u32) -> Result<(u32, u32)> {
+        let mut sum = (0u32, 0u32);
+        for text in self.text.iter_mut() {
+            match Widget::<X>::current_extent(text, ctx, h) {
+                Err(_) => {}
+                Ok(value) => {
+                    sum.0 += value.0;
+                    sum.1 += value.0;
+                }
+            }
+        }
+
+        Ok(sum)
+    }
+
+    fn is_greedy(&self) -> bool {
+        false
+    }
+
+    fn require_draw(&self) -> bool {
+        for text in self.text.iter() {
+            if Widget::<X>::require_draw(&*text) {
+                return true;
+            }
+        }
+        false
     }
 }

@@ -1,4 +1,5 @@
 use penrose::extensions::hooks::SpawnOnStartup;
+use penrose::stack;
 use penrose::util::{spawn_for_output, spawn_for_output_with_args, spawn_with_args};
 use penrose::{
     builtin::{
@@ -6,6 +7,7 @@ use penrose::{
         layout::{
             messages::{ExpandMain, IncMain, ShrinkMain},
             transformers::{Gaps, ReserveTop},
+            Grid, MainAndStack,
         },
     },
     core::{
@@ -19,8 +21,8 @@ use penrose::{
     x11rb::RustConn,
     Result,
 };
-use penrose_ui::{bar::Position, core::TextStyle, status_bar, StatusBar};
 use std::collections::HashMap;
+use std::time::SystemTime;
 use tracing_subscriber::{self, prelude::*};
 
 mod bar;
@@ -63,7 +65,7 @@ fn raw_key_bindings() -> HashMap<String, Box<dyn KeyEventHandler<RustConn>>> {
         "M-Return" => spawn(TERM),
         "M-apostrophe" => spawn(WEB_BROWSER),
         "M-r" => exit(),
-        "M-S-Escape" => spawn("pkill -fi kdwm"),
+        "M-Escape" => key_handler(|_, _| exit_menu()),
         "M-p" => key_handler(get_players),
         "M-backslash" => key_handler(|state, x| media(state, x, MediaMsg::PlayPause)),
         "M-bracketleft" => key_handler(|state, x| media(state, x, MediaMsg::Previous)),
@@ -71,6 +73,7 @@ fn raw_key_bindings() -> HashMap<String, Box<dyn KeyEventHandler<RustConn>>> {
         "M-i" => floating::sink_focused(),
         "M-o" => floating::float_focused(),
         "M-slash" => spawn(WINDOWS),
+        "M-s" => key_handler(|_, _| screenshot()),
     };
 
     for tag in &["1", "2", "3", "4", "5", "6", "7", "8", "9"] {
@@ -90,9 +93,13 @@ fn raw_key_bindings() -> HashMap<String, Box<dyn KeyEventHandler<RustConn>>> {
 }
 
 fn layouts() -> LayoutStack {
-    LayoutStack::default()
-        .map(|layout| ReserveTop::wrap(layout, BAR_HEIGHT_PX))
-        .map(|layout| Gaps::wrap(layout, 4, 4))
+    stack!(
+        MainAndStack::boxed_default(),
+        MainAndStack::side_mirrored(1, 0.6, 0.1),
+        Grid::boxed()
+    )
+    .map(|layout| ReserveTop::wrap(layout, BAR_HEIGHT_PX))
+    .map(|layout| Gaps::wrap(layout, 4, 4))
 }
 
 fn main() -> Result<()> {
@@ -131,7 +138,7 @@ struct Media {
 }
 
 use penrose::x::XConn;
-fn get_players<X: XConn>(state: &mut penrose::core::State<X>, x: &X) -> Result<()> {
+fn get_players<X: XConn>(state: &mut penrose::core::State<X>, _x: &X) -> Result<()> {
     let players = spawn_for_output_with_args("playerctl", &["-l"])
         .unwrap_or_default()
         .trim()
@@ -149,7 +156,7 @@ enum MediaMsg {
     Previous,
 }
 
-fn media<X: XConn>(state: &mut penrose::core::State<X>, x: &X, msg: MediaMsg) -> Result<()> {
+fn media<X: XConn>(state: &mut penrose::core::State<X>, _x: &X, msg: MediaMsg) -> Result<()> {
     let media = state.extension::<Media>().unwrap();
     let media = media.borrow();
     let player = match &media.player {
@@ -162,6 +169,38 @@ fn media<X: XConn>(state: &mut penrose::core::State<X>, x: &X, msg: MediaMsg) ->
         MediaMsg::Previous => "previous",
     };
     spawn_with_args("playerctl", &["-p", player, action]).unwrap_or_default();
+    Ok(())
+}
+
+fn screenshot() -> Result<()> {
+    let time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let path = format!("~/screenshots/{time}.png");
+    let shell = format!("maim -s -u {path}");
+    let _ = spawn_for_output_with_args("sh", &["-c", &shell])?;
+    let shell = format!("cat {path} | xclip -selection clipboard -t image/png -i");
+    spawn_with_args("sh", &["-c", &shell])?;
+    Ok(())
+}
+
+fn exit_menu() -> Result<()> {
+    let options = "quit\nreboot\nshutdown";
+    let selection =
+        spawn_for_output_with_args("sh", &["-c", &format!("echo '{options}' | rofi -dmenu")])?;
+    match selection.as_str() {
+        "quit" => {
+            spawn_with_args("pkill", &["-fi", "kdwm"])?;
+        }
+        "reboot" => {
+            spawn_with_args("reboot", &[])?;
+        }
+        "shutdown" => {
+            spawn_with_args("shutdown", &["now"])?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 
