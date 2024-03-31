@@ -2,7 +2,7 @@ use crate::theme;
 use ::penrose_ui::bar::widgets::Text;
 use penrose::util::{spawn_for_output_with_args, spawn_with_args};
 use penrose::x::XConn;
-use penrose_ui::bar::widgets::Widget;
+use penrose_ui::bar::widgets::{battery_summary, Widget};
 use penrose_ui::{
     bar::widgets::{IntervalText, RefreshText},
     *,
@@ -21,6 +21,30 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
     };
 
     let style2: core::TextStyle = core::TextStyle {
+        fg: theme::LIGHT[0].into(),
+        bg: Some(theme::DARK[0].into()),
+        padding: (10, 0),
+    };
+
+    let internalsep: core::TextStyle = core::TextStyle {
+        fg: theme::LIGHT[0].into(),
+        bg: Some(theme::DARK[0].into()),
+        padding: (0, 0),
+    };
+
+    let orange: core::TextStyle = core::TextStyle {
+        fg: theme::ORANGE.into(),
+        bg: Some(theme::DARK[0].into()),
+        padding: (10, 0),
+    };
+
+    let blue: core::TextStyle = core::TextStyle {
+        fg: theme::BLUE.into(),
+        bg: Some(theme::DARK[0].into()),
+        padding: (10, 0),
+    };
+
+    let green: core::TextStyle = core::TextStyle {
         fg: theme::GREEN.into(),
         bg: Some(theme::DARK[0].into()),
         padding: (10, 0),
@@ -30,33 +54,62 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
 
     widgets.push(Box::new(bar::widgets::Workspaces::new(
         style,
-        theme::GREEN,
         theme::DARK[3],
+        theme::LIGHT[3],
     )));
 
     widgets.push(Box::new(bar::widgets::ActiveWindowName::new(
-        40, style, true, false,
+        40, green, true, false,
     )));
 
+    widgets.push(Box::new(Text::new("|", style2, false, true)));
+
+    widgets.push(Box::new(Text::new("PLAY:", blue, false, true)));
+    widgets.push(Box::new(MediaWidget::new(green)));
+
+    widgets.push(Box::new(Text::new("|", style2, false, true)));
+
+    widgets.push(Box::new(Text::new("WTTR:", blue, false, true)));
     widgets.push(Box::new(IntervalText::new(
         style,
         get_weather,
         time::Duration::from_secs(60 * 60),
     )));
 
-    widgets.push(Box::new(MediaWidget::new(style)));
+    widgets.push(Box::new(Text::new("|", style2, false, true)));
 
+    widgets.push(Box::new(Text::new("PKGS:", blue, false, true)));
     widgets.push(Box::new(IntervalText::new(
-        style,
+        orange,
         get_updates,
         time::Duration::from_secs(60 * 15),
     )));
 
+    widgets.push(Box::new(Text::new("|", style2, false, true)));
+
+    widgets.push(Box::new(Text::new("BATT:", blue, false, true)));
     widgets.push(Box::new(IntervalText::new(
-        style,
-        get_datetime,
+        orange,
+        get_battery,
         time::Duration::from_secs(1),
     )));
+
+    widgets.push(Box::new(Text::new("|", style2, false, true)));
+
+    widgets.push(Box::new(Text::new("TIME:", blue, false, true)));
+    widgets.push(Box::new(IntervalText::new(
+        green,
+        get_date,
+        time::Duration::from_secs(1),
+    )));
+    widgets.push(Box::new(Text::new(",", internalsep, false, true)));
+    widgets.push(Box::new(IntervalText::new(
+        orange,
+        get_time,
+        time::Duration::from_secs(1),
+    )));
+
+    widgets.push(Box::new(Text::new(" ", style2, false, true)));
 
     bar::StatusBar::try_new(
         bar::Position::Top,
@@ -68,9 +121,14 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
     )
 }
 
-fn get_datetime() -> String {
+fn get_date() -> String {
     let datetime = chrono::Local::now();
-    format!("{}", datetime.format("%d %b %Y | %H:%M:%S"))
+    format!("{}", datetime.format("\"%d %b %Y\""))
+}
+
+fn get_time() -> String {
+    let datetime = chrono::Local::now();
+    format!("{}", datetime.format("%H:%M:%S"))
 }
 
 // this is laggy af
@@ -79,7 +137,11 @@ fn get_updates() -> String {
         .unwrap_or_default()
         .trim()
         .to_string();
-    format!("PKGS: {updates}")
+    if updates != "" {
+        updates
+    } else {
+        "0".to_string()
+    }
 }
 
 fn get_weather() -> String {
@@ -88,6 +150,40 @@ fn get_weather() -> String {
         .trim()
         .to_string();
     format!("{weather}")
+}
+
+fn get_battery() -> String {
+    let full = get_battery_helper("BAT0", "charge_full");
+    let current = get_battery_helper("BAT0", "charge_now");
+    let status = match std::fs::read_to_string(format!("/sys/class/power_supply/BAT0/status")).ok()
+    {
+        None => "",
+        Some(string) => match string.trim() {
+            "Charging" => "▲",
+            "Discharging" => "▼",
+            _ => "-",
+        },
+    };
+    if let Some(full) = full {
+        if let Some(current) = current {
+            let charge_percent = (current as f32) / (full as f32) * 100.0;
+            format!("{charge_percent:.2}% {status}")
+        } else {
+            "".to_string()
+        }
+    } else {
+        "".to_string()
+    }
+}
+
+fn get_battery_helper(bat: &str, fname: &str) -> Option<u32> {
+    match std::fs::read_to_string(format!("/sys/class/power_supply/{bat}/{fname}"))
+        .ok()
+        .map(|s| s.trim().to_string().parse().ok())
+    {
+        None => None,
+        Some(item) => item,
+    }
 }
 
 struct MediaWidget {
@@ -119,7 +215,7 @@ impl MediaWidget {
                         Ok(inner) => inner,
                         Err(poisoned) => poisoned.into_inner(),
                     };
-                    let media = spawn_for_output_with_args(
+                    let mut media = spawn_for_output_with_args(
                         "playerctl",
                         &[
                             "-p",
@@ -132,6 +228,9 @@ impl MediaWidget {
                     .unwrap_or_default()
                     .trim()
                     .to_string();
+                    if media == "" {
+                        media = "None".to_string()
+                    }
                     t.set_text(&format!("{media}"));
                 }
                 thread::sleep(std::time::Duration::from_secs(1));
