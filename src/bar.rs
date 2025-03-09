@@ -82,14 +82,15 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
         time::Duration::from_secs(60 * 15),
     )));
 
-    widgets.push(Box::new(Text::new("|", style2, false, true)));
-
-    widgets.push(Box::new(Text::new("BATT:", blue, false, true)));
-    widgets.push(Box::new(IntervalText::new(
-        orange,
-        get_battery,
-        time::Duration::from_secs(1),
-    )));
+    if get_battery().unwrap() != "" {
+        widgets.push(Box::new(Text::new("|", style2, false, true)));
+        widgets.push(Box::new(Text::new("BATT:", blue, false, true)));
+        widgets.push(Box::new(IntervalText::new(
+            orange,
+            get_battery,
+            time::Duration::from_secs(1),
+        )));
+    }
 
     widgets.push(Box::new(Text::new("|", style2, false, true)));
 
@@ -212,23 +213,43 @@ impl MediaWidget {
                         Ok(inner) => inner,
                         Err(poisoned) => poisoned.into_inner(),
                     };
-                    let mut media = spawn_for_output_with_args(
+                    // "{{ artist }}: {{ title }} [{{ playerName }}]",
+                    let mut artist = spawn_for_output_with_args(
                         "playerctl",
-                        &[
-                            "-p",
-                            &player,
-                            "metadata",
-                            "-f",
-                            "{{ artist }}: {{ title }} [{{ playerName }}]",
-                        ],
+                        &["-p", &player, "metadata", "-f", "{{ artist }}"],
                     )
                     .unwrap_or_default()
                     .trim()
                     .to_string();
-                    if media == "" {
-                        media = "None".to_string()
-                    }
-                    t.set_text(&format!("{media}"));
+                    let mut title = spawn_for_output_with_args(
+                        "playerctl",
+                        &["-p", &player, "metadata", "-f", "{{ title }}"],
+                    )
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                    let mut player_name = spawn_for_output_with_args(
+                        "playerctl",
+                        &["-p", &player, "metadata", "-f", "{{ playerName }}"],
+                    )
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                    let media = if title == "" {
+                        "None".to_string()
+                    } else {
+                        let title = if title.len() > 20 {
+                            let mut title = title.chars().collect::<Vec<char>>()[0..22]
+                                .iter()
+                                .collect::<String>();
+                            title.push_str("...");
+                            title
+                        } else {
+                            title
+                        };
+                        format!("{artist}: {title} [{player_name}]")
+                    };
+                    t.set_text(&media);
                 }
                 thread::sleep(std::time::Duration::from_secs(1));
             }
