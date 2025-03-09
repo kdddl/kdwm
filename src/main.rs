@@ -50,10 +50,16 @@ fn raw_key_bindings() -> HashMap<String, Box<dyn KeyEventHandler<RustConn>>> {
         "M-k" => modify_with(|cs| cs.focus_up()),
         "M-S-j" => modify_with(|cs| cs.swap_down()),
         "M-S-k" => modify_with(|cs| cs.swap_up()),
+        "M-e" => modify_with(|cs| cs.focus_down()),
+        "M-i" => modify_with(|cs| cs.focus_up()),
+        "M-S-e" => modify_with(|cs| cs.swap_down()),
+        "M-S-i" => modify_with(|cs| cs.swap_up()),
         "M-S-q" => modify_with(|cs| cs.kill_focused()),
         "M-Tab" => modify_with(|cs| cs.toggle_tag()),
         "M-l" => modify_with(|cs| cs.next_screen()),
         "M-h" => modify_with(|cs| cs.previous_screen()),
+        "M-o" => modify_with(|cs| cs.next_screen()),
+        "M-n" => modify_with(|cs| cs.previous_screen()),
         "M-grave" => modify_with(|cs| cs.next_layout()),
         "M-S-grave" => modify_with(|cs| cs.previous_layout()),
         "M-f" => toggle_fullscreen(),
@@ -70,10 +76,10 @@ fn raw_key_bindings() -> HashMap<String, Box<dyn KeyEventHandler<RustConn>>> {
         "M-backslash" => key_handler(|state, x| media(state, x, MediaMsg::PlayPause)),
         "M-bracketleft" => key_handler(|state, x| media(state, x, MediaMsg::Previous)),
         "M-bracketright" => key_handler(|state, x| media(state, x, MediaMsg::Next)),
-        "M-i" => floating::sink_focused(),
-        "M-o" => floating::float_focused(),
         "M-slash" => spawn(WINDOWS),
         "M-s" => key_handler(|_, _| screenshot()),
+        "M-S-s" => key_handler(|_, _| static_screenshot()),
+        "M-c" => key_handler(|_, _| qalc()),
     };
 
     for tag in &["1", "2", "3", "4", "5", "6", "7", "8", "9"] {
@@ -185,6 +191,19 @@ fn screenshot() -> Result<()> {
     Ok(())
 }
 
+fn static_screenshot() -> Result<()> {
+    let time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let path = format!("~/screenshots/{time}.png");
+    let shell = format!("maim -u {path}");
+    let _ = spawn_for_output_with_args("sh", &["-c", &shell])?;
+    let shell = format!("cat {path} | xclip -selection clipboard -t image/png -i");
+    spawn_with_args("sh", &["-c", &shell])?;
+    Ok(())
+}
+
 fn exit_menu() -> Result<()> {
     let options = "quit\nreboot\nshutdown";
     let selection =
@@ -201,6 +220,19 @@ fn exit_menu() -> Result<()> {
         }
         _ => {}
     }
+    Ok(())
+}
+
+fn qalc() -> Result<()> {
+    let thread = std::thread::spawn(move || {
+        let equation =
+            spawn_for_output_with_args("rofi", &["-dmenu", "-l", "0", "-p", "calc"]).unwrap();
+        if equation != "" {
+            let result = spawn_for_output_with_args("qalc", &["-t", &equation]).unwrap();
+            spawn_with_args("rofi", &["-e", &result.trim()]).unwrap();
+        }
+    });
+
     Ok(())
 }
 

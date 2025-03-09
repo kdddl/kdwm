@@ -1,12 +1,9 @@
 use crate::theme;
 use ::penrose_ui::bar::widgets::Text;
-use penrose::util::{spawn_for_output_with_args, spawn_with_args};
+use penrose::util::spawn_for_output_with_args;
 use penrose::x::XConn;
-use penrose_ui::bar::widgets::{battery_summary, Widget};
-use penrose_ui::{
-    bar::widgets::{IntervalText, RefreshText},
-    *,
-};
+use penrose_ui::bar::widgets::Widget;
+use penrose_ui::{bar::widgets::IntervalText, *};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -55,7 +52,7 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
     widgets.push(Box::new(bar::widgets::Workspaces::new(
         style,
         theme::DARK[3],
-        theme::LIGHT[3],
+        theme::DARK[1],
     )));
 
     widgets.push(Box::new(bar::widgets::ActiveWindowName::new(
@@ -121,38 +118,38 @@ pub fn create_bar<X: XConn>() -> Result<bar::StatusBar<X>> {
     )
 }
 
-fn get_date() -> String {
+fn get_date() -> Option<String> {
     let datetime = chrono::Local::now();
-    format!("{}", datetime.format("\"%d %b %Y\""))
+    Some(format!("{}", datetime.format("\"%d %b %Y\"")))
 }
 
-fn get_time() -> String {
+fn get_time() -> Option<String> {
     let datetime = chrono::Local::now();
-    format!("{}", datetime.format("%H:%M:%S"))
+    Some(format!("{}", datetime.format("%H:%M:%S")))
 }
 
 // this is laggy af
-fn get_updates() -> String {
+fn get_updates() -> Option<String> {
     let updates = spawn_for_output_with_args("sh", &["-c", "checkupdates | wc -l"])
         .unwrap_or_default()
         .trim()
         .to_string();
     if updates != "" {
-        updates
+        Some(updates)
     } else {
-        "0".to_string()
+        Some("0".to_string())
     }
 }
 
-fn get_weather() -> String {
+fn get_weather() -> Option<String> {
     let weather = spawn_for_output_with_args("curl", &["-s", "http://wttr.in?format=1"])
         .unwrap_or_default()
         .trim()
         .to_string();
-    format!("{weather}")
+    Some(format!("{weather}"))
 }
 
-fn get_battery() -> String {
+fn get_battery() -> Option<String> {
     let full = get_battery_helper("BAT0", "charge_full");
     let current = get_battery_helper("BAT0", "charge_now");
     let status = match std::fs::read_to_string(format!("/sys/class/power_supply/BAT0/status")).ok()
@@ -164,7 +161,7 @@ fn get_battery() -> String {
             _ => "-",
         },
     };
-    if let Some(full) = full {
+    Some(if let Some(full) = full {
         if let Some(current) = current {
             let charge_percent = (current as f32) / (full as f32) * 100.0;
             format!("{charge_percent:.2}% {status}")
@@ -173,7 +170,7 @@ fn get_battery() -> String {
         }
     } else {
         "".to_string()
-    }
+    })
 }
 
 fn get_battery_helper(bat: &str, fname: &str) -> Option<u32> {
